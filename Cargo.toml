@@ -1,0 +1,21 @@
+[package]
+authors = ["Aaron Pribadi <aaron.pribadi@gmail.com>"]
+edition = "2021"
+name = "adelie"
+
+[dependencies]
+oxcart = { git = "https://github.com/apribadi/oxcart.git" }
+plain-old-pointer = { git = "https://github.com/apribadi/pop.git" }
+
+[features]
+
+[lints.rust]
+elided_lifetimes_in_paths = "warn"
+# missing_docs = "warn"
+non_ascii_idents = "warn"
+trivial_numeric_casts = "warn"
+unreachable_pub = "warn"
+unsafe_op_in_unsafe_fn = "deny"
+unused_lifetimes = "warn"
+unused_qualifications = "warn"
+unused_results = "warn"
