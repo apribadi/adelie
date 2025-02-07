@@ -17,6 +17,10 @@ pub trait ByteSlice {
 
   fn pop_slice_mut<'a, 'b>(self: &'a mut &'b mut Self, k: usize) -> &'b mut [u8];
 
+  fn pop_all<'a, 'b>(self: &'a mut &'b Self) -> &'b [u8];
+
+  fn pop_all_mut<'a, 'b>(self: &'a mut &'b mut Self) -> &'b mut [u8];
+
   fn put_u8(self: &mut &mut Self, value: u8);
 
   fn put_u16(self: &mut &mut Self, value: u16);
@@ -103,6 +107,16 @@ impl ByteSlice for [u8] {
   }
 
   #[inline(always)]
+  fn pop_all<'a, 'b>(self: &'a mut &'b Self) -> &'b [u8] {
+    core::mem::replace(self, &[])
+  }
+
+  #[inline(always)]
+  fn pop_all_mut<'a, 'b>(self: &'a mut &'b mut Self) -> &'b mut [u8] {
+    core::mem::replace(self, &mut [])
+  }
+
+  #[inline(always)]
   fn put_u8(self: &mut &mut [u8], value: u8) {
     *self.pop_chunk_mut() = value.to_le_bytes();
   }
@@ -131,6 +145,7 @@ impl ByteSlice for [u8] {
   fn put_f64(self: &mut &mut [u8], value: f64) {
     *self.pop_chunk_mut() = value.to_le_bytes();
   }
+
   #[inline(always)]
   fn pop_u8(self: &mut &[u8]) -> u8 {
     u8::from_le_bytes(*self.pop_chunk())
@@ -174,10 +189,10 @@ impl<'a, const K: usize> Iterator for IterChunks<'a, K> {
 
   #[inline(always)]
   fn next(&mut self) -> Option<Self::Item> {
-    if ! (K <= self.0.len()) {
-      return None;
+    if K <= self.0.len() {
+      Some(self.0.pop_chunk())
+    } else {
+      None
     }
-
-    return Some(self.0.pop_chunk());
   }
 }

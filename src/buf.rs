@@ -35,37 +35,22 @@ impl Buf {
   }
 
   #[inline(always)]
-  fn reserve_internal(&mut self, more: usize) {
+  fn reserve(&mut self, more: usize) {
     if more <= self.cap - self.len { return; }
     let (p, c) = unsafe { grow(self.ptr, self.cap, self.len, more) };
     self.ptr = p;
     self.cap = c;
   }
 
-  pub fn reserve(&mut self, size: usize) -> &mut [u8] {
-    self.reserve_internal(size);
-
+  pub fn append(&mut self, size: usize) -> &mut [u8] {
+    self.reserve(size);
     let p = self.ptr;
     let n = self.len;
-
     self.len = n + size;
-
     unsafe { (p + n).as_slice_mut_ref(size) }
   }
-}
 
-impl core::ops::Deref for Buf {
-  type Target = [u8];
-
-  #[inline(always)]
-  fn deref(&self) -> &Self::Target {
+  pub fn view(&self) -> &[u8] {
     unsafe { self.ptr.as_slice_ref(self.len) }
-  }
-}
-
-impl core::ops::DerefMut for Buf {
-  #[inline(always)]
-  fn deref_mut(&mut self) -> &mut Self::Target {
-    unsafe { self.ptr.as_slice_mut_ref(self.len) }
   }
 }
