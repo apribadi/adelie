@@ -3,24 +3,25 @@ use crate::prelude::*;
 pub enum Instruction<'a> {
   // BB entry
 
-  Func(u32, TypeList<'a>),
+  Function(u32, TypeList<'a>),
   Case(),
   Join(TypeList<'a>),
   Kont(TypeList<'a>),
 
   // BB internal
 
-  ImmI32(u32),
-  ImmI64(u64),
+  ConstBool(bool),
+  ConstI32(u32),
+  ConstI64(u64),
   Op1(Op1, Value),
   Op2(Op2, Value, Value),
   Select(Value, Value, Value),
 
   // BB terminator
 
-  Cond(Value, Label, Label),
-  Ret(u32, ValueList<'a>),
-  Jump(Label, ValueList<'a>),
+  If(Value, Label, Label),
+  Return(u32, ValueList<'a>),
+  Goto(Label, ValueList<'a>),
 }
 
 #[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
@@ -46,20 +47,21 @@ pub struct TypeList<'a>(&'a [u8]);
 pub struct ValueList<'a>(&'a [u8]);
 
 impl Tag {
-  pub const FUNC: Self = Self(0x01);
+  pub const FUNCTION: Self = Self(0x01);
   pub const CASE: Self = Self(0x02);
   pub const JOIN: Self = Self(0x03);
   pub const KONT: Self = Self(0x04);
 
-  pub const IMM_I32: Self = Self(0x08);
-  pub const IMM_I64: Self = Self(0x09);
+  pub const CONST_BOOL: Self = Self(0x05);
+  pub const CONST_I32: Self = Self(0x08);
+  pub const CONST_I64: Self = Self(0x09);
   pub const OP1: Self = Self(0x05);
   pub const OP2: Self = Self(0x06);
   pub const SELECT: Self = Self(0x07);
 
-  pub const COND: Self = Self(0x0a);
-  pub const JUMP: Self = Self(0x0b);
-  pub const RET: Self = Self(0x0c);
+  pub const IF: Self = Self(0x0a);
+  pub const GOTO: Self = Self(0x0b);
+  pub const RETURN: Self = Self(0x0c);
   pub const CALL: Self = Self(0x0d);
   pub const TAILCALL: Self = Self(0x0e);
 }
@@ -71,23 +73,23 @@ impl Type {
   pub const I32: Self = Self(0x07);
   pub const I64: Self = Self(0x08);
 
-  pub fn info(self)
-    -> (
+  pub fn name(self) -> &'static str {
+    self.info().0
+  }
+
+  fn info(self)
+    -> &'static (
       &'static str,
     )
   {
     match self {
-      Self::I64 => (
+      Self::I64 => &(
         "i64",
       ),
-      _ => (
+      _ => &(
         "unknown",
       )
     }
-  }
-
-  pub fn name(self) -> &'static str {
-    self.info().0
   }
 }
 
@@ -98,28 +100,29 @@ impl core::fmt::Display for Type {
 }
 
 impl Op1 {
-  pub const I64_BIT_NOT: Self = Self(0x05);
-  pub const I64_CLZ: Self = Self(0x06);
-  pub const I64_CTZ: Self = Self(0x07);
-  pub const I64_NEG: Self = Self(0x08);
+  pub const CAST_I32_I64_SX: Self = Self(0x01);
+  pub const CAST_I32_I64_ZX: Self = Self(0x02);
+  pub const CAST_I64_I32: Self = Self(0x03);
+  pub const CTZ_I64: Self = Self(0x07);
+  pub const NEG_I64: Self = Self(0x08);
 
   pub fn name(self) -> &'static str {
     self.info().0
   }
 
-  pub fn info(self)
-    -> (
+  fn info(self)
+    -> &'static (
       &'static str,
     )
   {
     match self {
-      Self::I64_CTZ => (
-        "i64.ctz",
+      Self::CTZ_I64 => &(
+        "ctz.i64",
       ),
-      Self::I64_NEG => (
-        "i64.neg",
+      Self::NEG_I64 => &(
+        "neg.i64",
       ),
-      _ => (
+      _ => &(
         "unknown",
       )
     }
@@ -133,28 +136,28 @@ impl core::fmt::Display for Op1 {
 }
 
 impl Op2 {
-  pub const I64_BIT_XOR: Self = Self(0x05);
-  pub const I64_ADD: Self = Self(0x06);
-  pub const I64_SUB: Self = Self(0x07);
-  pub const I64_IS_EQ: Self = Self(0x08);
+  pub const ADD_I64: Self = Self(0x06);
+  pub const SUB_I64: Self = Self(0x07);
+  pub const IS_EQ_I64: Self = Self(0x08);
 
-  pub fn info(self)
+  pub fn name(self) -> &'static str {
+    self.info().0
+  }
+
+  fn info(self)
     -> &'static (
       &'static str,
     )
   {
     match self {
-      Self::I64_BIT_XOR => &(
-        "i64.bit_xor",
+      Self::ADD_I64 => &(
+        "add.i64",
       ),
-      Self::I64_ADD => &(
-        "i64.add",
+      Self::SUB_I64 => &(
+        "sub.i64",
       ),
-      Self::I64_SUB => &(
-        "i64.sub",
-      ),
-      Self::I64_IS_EQ => &(
-        "i64.is_eq",
+      Self::IS_EQ_I64 => &(
+        "is_eq.i64",
       ),
       _ => &(
         "unknown",
@@ -183,99 +186,150 @@ impl<'a> ValueList<'a> {
   }
 }
 
-pub struct SsaBuf(Buf);
+pub struct SsaBuf {
+  buf: Buf,
+  value_id: u32,
+  label_id: u32,
+}
+
+#[derive(Clone, Copy)]
+pub struct PatchPoint(pub usize);
 
 impl SsaBuf {
   pub fn new() -> Self {
-    SsaBuf(Buf::new())
+    Self {
+      buf: Buf::new(),
+      value_id: 0,
+      label_id: 0,
+    }
+  }
+
+  pub fn next_value(&mut self) -> Value {
+    let n = self.value_id;
+    self.value_id = n + 1;
+    Value(n)
+  }
+
+  pub fn next_label(&mut self) -> Label {
+    let n = self.label_id;
+    self.label_id = n + 1;
+    Label(n)
   }
 
   pub fn view(&self) -> &[u8] {
-    self.0.view()
+    self.buf.view()
   }
 
-  pub fn emit_type(&mut self, Type(t): Type) {
-    let mut w = self.0.append(1);
+  pub fn patch_point(&self) -> PatchPoint {
+    PatchPoint(self.buf.len())
+  }
+
+  pub fn patch_label(&mut self, PatchPoint(u): PatchPoint, Label(a): Label) {
+    let mut w = self.buf.get_slice_mut(u, 4);
+    w.put_u32(a)
+  }
+
+  pub fn emit_parameter(&mut self, Type(t): Type) -> Value {
+    let mut w = self.buf.append(1);
     w.put_u8(t);
+    self.next_value()
   }
 
   pub fn emit_value(&mut self, Value(x): Value) {
-    let mut w = self.0.append(4);
+    let mut w = self.buf.append(4);
     w.put_u32(x);
   }
 
-  pub fn emit_func(&mut self, nrets: u32, nargs: u32) {
-    let mut w = self.0.append(9);
-    w.put_u8(Tag::FUNC.0);
-    w.put_u32(nrets);
+  pub fn emit_function(&mut self, nkonts: u32, nargs: u32) {
+    let mut w = self.buf.append(9);
+    w.put_u8(Tag::FUNCTION.0);
+    w.put_u32(nkonts);
     w.put_u32(nargs);
+    self.value_id = 0;
+    self.label_id = 1;
   }
 
-  pub fn emit_case(&mut self) {
-    let mut w = self.0.append(1);
+  pub fn emit_case(&mut self) -> Label {
+    let mut w = self.buf.append(1);
     w.put_u8(Tag::CASE.0);
+    self.next_label()
   }
 
-  pub fn emit_join(&mut self, nargs: u32) {
-    let mut w = self.0.append(5);
+  pub fn emit_join(&mut self, nargs: u32) -> Label {
+    let mut w = self.buf.append(5);
     w.put_u8(Tag::JOIN.0);
     w.put_u32(nargs);
+    self.next_label()
   }
 
-  pub fn emit_imm_i64(&mut self, c: u64) {
-    let mut w = self.0.append(9);
-    w.put_u8(Tag::IMM_I64.0);
+  pub fn emit_const_bool(&mut self, p: bool) -> Value {
+    let mut w = self.buf.append(2);
+    w.put_u8(Tag::CONST_BOOL.0);
+    w.put_u8(p as u8);
+    self.next_value()
+  }
+
+  pub fn emit_const_i64(&mut self, c: u64) -> Value {
+    let mut w = self.buf.append(9);
+    w.put_u8(Tag::CONST_I64.0);
     w.put_u64(c);
+    self.next_value()
   }
 
-  pub fn emit_op1(&mut self, Op1(t): Op1, Value(x): Value) {
-    let mut w = self.0.append(6);
+  pub fn emit_op1(&mut self, Op1(t): Op1, Value(x): Value) -> Value {
+    let mut w = self.buf.append(6);
     w.put_u8(Tag::OP1.0);
     w.put_u8(t);
     w.put_u32(x);
+    self.next_value()
   }
 
-  pub fn emit_op2(&mut self, Op2(t): Op2, Value(x): Value, Value(y): Value) {
-    let mut w = self.0.append(10);
+  pub fn emit_op2(&mut self, Op2(t): Op2, Value(x): Value, Value(y): Value) -> Value {
+    let mut w = self.buf.append(10);
     w.put_u8(Tag::OP2.0);
     w.put_u8(t);
     w.put_u32(x);
     w.put_u32(y);
+    self.next_value()
   }
 
-  pub fn emit_select(&mut self, Value(p): Value, Value(x): Value, Value(y): Value) {
-    let mut w = self.0.append(13);
+  pub fn emit_select(&mut self, Value(p): Value, Value(x): Value, Value(y): Value) -> Value {
+    let mut w = self.buf.append(13);
     w.put_u8(Tag::SELECT.0);
     w.put_u32(p);
     w.put_u32(x);
     w.put_u32(y);
+    self.next_value()
   }
 
-  pub fn emit_cond(&mut self, Value(p): Value, Label(a): Label, Label(b): Label) {
-    let mut w = self.0.append(13);
-    w.put_u8(Tag::COND.0);
+  pub fn emit_if(&mut self, Value(p): Value, Label(a): Label, Label(b): Label) -> (PatchPoint, PatchPoint) {
+    let mut w = self.buf.append(13);
+    w.put_u8(Tag::IF.0);
     w.put_u32(p);
     w.put_u32(a);
     w.put_u32(b);
-    assert!(w.is_empty());
+    let a = PatchPoint(self.buf.len() - 8);
+    let b = PatchPoint(self.buf.len() - 4);
+    (a, b)
   }
 
-  pub fn emit_jump(&mut self, Label(a): Label, nargs: u32) {
-    let mut w = self.0.append(9);
-    w.put_u8(Tag::JUMP.0);
+  pub fn emit_goto(&mut self, Label(a): Label, nargs: u32) -> PatchPoint {
+    let mut w = self.buf.append(9);
+    w.put_u8(Tag::GOTO.0);
     w.put_u32(a);
     w.put_u32(nargs);
+    PatchPoint(self.buf.len() - 8)
   }
 
-  pub fn emit_ret(&mut self, index: u32, nargs: u32) {
-    let mut w = self.0.append(9);
-    w.put_u8(Tag::RET.0);
+  pub fn emit_return(&mut self, index: u32, nargs: u32) {
+    let mut w = self.buf.append(9);
+    w.put_u8(Tag::RETURN.0);
     w.put_u32(index);
     w.put_u32(nargs);
   }
 }
 
-fn window<'a, 'b>(buf: &'a mut &'b [u8], size: usize) -> Option<&'b [u8]> {
+fn chomp<'a, 'b>(buf: &'a mut &'b [u8], size: usize) -> Option<&'b [u8]> {
   if size <= buf.len() {
     Some(buf.pop_slice(size))
   } else {
@@ -287,67 +341,71 @@ pub fn read<'a, 'b>(buf: &'a mut &'b [u8]) -> Option<Instruction<'b>> {
   let mut cursor = *buf;
 
   let instr =
-    match Tag(window(&mut cursor, 1)?.pop_u8()) {
-      Tag::FUNC => {
-        let mut r = window(&mut cursor, 8)?;
-        let nrets = r.pop_u32();
+    match Tag(chomp(&mut cursor, 1)?.pop_u8()) {
+      Tag::FUNCTION => {
+        let mut r = chomp(&mut cursor, 8)?;
+        let nkonts = r.pop_u32();
         let nargs = r.pop_u32();
-        let mut r = window(&mut cursor, nargs as usize)?;
-        Instruction::Func(nrets, TypeList(r.pop_all()))
+        let mut r = chomp(&mut cursor, nargs as usize)?;
+        Instruction::Function(nkonts, TypeList(r.pop_all()))
       }
       Tag::CASE => {
         Instruction::Case()
       }
       Tag::JOIN => {
-        let mut r = window(&mut cursor, 4)?;
+        let mut r = chomp(&mut cursor, 4)?;
         let nargs = r.pop_u32();
-        let mut r = window(&mut cursor, nargs as usize)?;
+        let mut r = chomp(&mut cursor, nargs as usize)?;
         Instruction::Join(TypeList(r.pop_all()))
       }
-      Tag::IMM_I64 => {
-        let mut r = window(&mut cursor, 8)?;
-        Instruction::ImmI64(r.pop_u64())
+      Tag::CONST_BOOL => {
+        let mut r = chomp(&mut cursor, 1)?;
+        Instruction::ConstBool(r.pop_u8() != 0)
+      }
+      Tag::CONST_I64 => {
+        let mut r = chomp(&mut cursor, 8)?;
+        Instruction::ConstI64(r.pop_u64())
       }
       Tag::OP1 => {
-        let mut r = window(&mut cursor, 5)?;
+        let mut r = chomp(&mut cursor, 5)?;
         let t = Op1(r.pop_u8());
         let x = Value(r.pop_u32());
         Instruction::Op1(t, x)
       }
       Tag::OP2 => {
-        let mut r = window(&mut cursor, 9)?;
+        let mut r = chomp(&mut cursor, 9)?;
         let t = Op2(r.pop_u8());
         let x = Value(r.pop_u32());
         let y = Value(r.pop_u32());
         Instruction::Op2(t, x, y)
       }
       Tag::SELECT => {
-        let mut r = window(&mut cursor, 12)?;
+        let mut r = chomp(&mut cursor, 12)?;
         let p = Value(r.pop_u32());
         let x = Value(r.pop_u32());
         let y = Value(r.pop_u32());
         Instruction::Select(p, x, y)
       }
-      Tag::COND => {
-        let mut r = window(&mut cursor, 12)?;
+      Tag::IF => {
+        let mut r = chomp(&mut cursor, 12)?;
         let p = Value(r.pop_u32());
         let a = Label(r.pop_u32());
         let b = Label(r.pop_u32());
-        Instruction::Cond(p, a, b)
+        Instruction::If(p, a, b)
       }
-      Tag::JUMP => {
-        let mut r = window(&mut cursor, 8)?;
+      Tag::GOTO => {
+        let mut r = chomp(&mut cursor, 8)?;
         let a = r.pop_u32();
         let nargs = r.pop_u32();
-        let mut r = window(&mut cursor, nargs as usize * 4)?;
-        Instruction::Jump(Label(a), ValueList(r.pop_all()))
+        let mut r = chomp(&mut cursor, nargs as usize * 4)?;
+        Instruction::Goto(Label(a), ValueList(r.pop_all()))
       }
-      Tag::RET => {
-        let mut r = window(&mut cursor, 8)?;
+      Tag::RETURN => {
+        let mut r = chomp(&mut cursor, 8)?;
         let index = r.pop_u32();
         let nargs = r.pop_u32();
-        let mut r = window(&mut cursor, nargs as usize * 4)?;
-        Instruction::Ret(index, ValueList(r.pop_all()))
+        let mut r = chomp(&mut cursor, nargs as usize * 4)?;
+        Instruction::Return(index, ValueList(r.pop_all()))
       }
       _ => {
         return None;
@@ -355,21 +413,28 @@ pub fn read<'a, 'b>(buf: &'a mut &'b [u8]) -> Option<Instruction<'b>> {
     };
 
   *buf = cursor;
+
   return Some(instr);
 }
 
 pub fn display(buf: &[u8]) {
   let mut r = buf;
+  let mut function_id = 0;
   let mut label_id = 0;
   let mut value_id = 0;
+  let mut nkonts = 0;
 
   loop {
     match read(&mut r) {
       None => { break; }
       Some(inst) => {
         match inst {
-          Instruction::Func(nrets, args) => {
-            print!("{}: func {} (", label_id, nrets);
+          Instruction::Function(n, args) => {
+            label_id = 0;
+            value_id = 0;
+            nkonts = n;
+            print!("{}: function ${} (", function_id, label_id);
+            function_id = function_id + 1;
             label_id = label_id + 1;
             for (i, ty) in args.iter().enumerate() {
               if i != 0 {
@@ -378,7 +443,20 @@ pub fn display(buf: &[u8]) {
               print!("%{} {}", value_id, ty);
               value_id = value_id + 1;
             }
-            print!(")\n");
+            print!(") -> ");
+            if nkonts == 0 {
+              print!("!");
+            } else {
+              print!("(");
+              for i in 0 .. nkonts {
+                if i != 0 {
+                  print!("|");
+                }
+                print!("...");
+              }
+              print!(")");
+            }
+            print!("\n");
           }
           Instruction::Case() => {
             print!("{}: case\n", label_id);
@@ -396,8 +474,12 @@ pub fn display(buf: &[u8]) {
             }
             print!(")\n");
           }
-          Instruction::ImmI64(c) => {
-            print!("\t%{} = i64.imm #{}\n", value_id, c);
+          Instruction::ConstBool(p) => {
+            print!("\t%{} = const.bool #{}\n", value_id, p);
+            value_id = value_id + 1;
+          }
+          Instruction::ConstI64(c) => {
+            print!("\t%{} = const.i64 #{}\n", value_id, c);
             value_id = value_id + 1;
           }
           Instruction::Op1(t, Value(x)) => {
@@ -412,11 +494,11 @@ pub fn display(buf: &[u8]) {
             print!("\t%{} = select %{} %{} %{}\n", value_id, p, x, y);
             value_id = value_id + 1;
           }
-          Instruction::Cond(Value(p), Label(a), Label(b)) => {
-            print!("\tcond %{} =>{} =>{}\n", p, a, b);
+          Instruction::If(Value(p), Label(a), Label(b)) => {
+            print!("\tif %{} =>{} =>{}\n", p, a, b);
           }
-          Instruction::Jump(Label(a), args) => {
-            print!("\tjump =>{} (", a);
+          Instruction::Goto(Label(a), args) => {
+            print!("\tgoto =>{} (", a);
             for (i, Value(x)) in args.iter().enumerate() {
               if i != 0 {
                 print!(", ");
@@ -425,20 +507,25 @@ pub fn display(buf: &[u8]) {
             }
             print!(")\n");
           }
-          Instruction::Ret(index, args) => {
-            print!("\tret {} (", index);
+          Instruction::Return(index, args) => {
+            print!("\treturn (", );
+            for _ in 0 .. index {
+              print!("|")
+            }
             for (i, Value(x)) in args.iter().enumerate() {
               if i != 0 {
                 print!(", ");
               }
               print!("%{}", x);
+            }
+            for _ in 0 .. nkonts.saturating_sub(index).saturating_sub(1) {
+              print!("|")
             }
             print!(")\n");
           }
           _ => {
             print!("UNKNOWN INSTRUCTION\n")
           }
-
         }
       }
     }

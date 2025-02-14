@@ -34,6 +34,10 @@ impl Buf {
     }
   }
 
+  pub fn len(&self) -> usize {
+    self.len
+  }
+
   #[inline(always)]
   fn reserve(&mut self, more: usize) {
     if more <= self.cap - self.len { return; }
@@ -48,6 +52,13 @@ impl Buf {
     let n = self.len;
     self.len = n + size;
     unsafe { (p + n).as_slice_mut_ref(size) }
+  }
+
+  pub fn get_slice_mut(&self, offset: usize, size: usize) -> &mut [u8] {
+    let p = self.ptr;
+    let n = self.len;
+    assert!(offset <= n && size <= n - offset);
+    unsafe { (p + offset).as_slice_mut_ref(size) }
   }
 
   pub fn view(&self) -> &[u8] {
