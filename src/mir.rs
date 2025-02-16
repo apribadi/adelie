@@ -20,9 +20,28 @@ pub enum Type {
   I64,
 }
 
+/*
+#[derive(Clone, Copy)]
+pub enum ScalarType {
+  Bool,
+  I5,
+  I6,
+  I32,
+  I64,
+}
+
+pub enum Type<'a> {
+  Scalar(ScalarType),
+  Tuple(&'a [Type<'a>]),
+}
+
+pub enum EffectType {
+}
+*/
+
 pub struct Function<'a> {
   pub name: Symbol<'a>,
-  pub parameters: &'a [(Symbol<'a>, Type)],
+  pub params: &'a [(Symbol<'a>, Type)],
   // pub rets: &'a [&'a [Type]],
   pub body: Expression<'a>,
 }
@@ -58,7 +77,7 @@ const _: () = assert!(size_of::<Expression<'static>>() <= 24);
 #[derive(Clone, Copy)]
 pub struct Call<'a> {
   pub function: Symbol<'a>,
-  pub arguments: &'a [Expression<'a>],
+  pub args: &'a [Expression<'a>],
 }
 
 #[derive(Clone, Copy)]
@@ -77,17 +96,21 @@ pub struct Loop<'a> {
 
 pub static FIB: Function<'static> = Function {
   name: Symbol(b"fib"),
-  parameters: &[(Symbol(b"n"), Type::I64)],
+  params: &[(Symbol(b"n"), Type::I64)],
   //body: Expression::ConstI64(13),
   body:
     Expression::Call(&Call {
       function: Symbol(b"add.i64"),
-      arguments: &[
-        Expression::ConstI64(0),
+      args: &[
         Expression::If(&If {
-          condition: Expression::ConstBool(true),
+          condition: Expression::ConstBool(false),
           if_true: Expression::ConstI64(1),
           if_false: Expression::ConstI64(2)
+        }),
+        Expression::If(&If {
+          condition: Expression::ConstBool(true),
+          if_true: Expression::ConstI64(3),
+          if_false: Expression::ConstI64(4)
         })
       ]
     })

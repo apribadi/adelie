@@ -1,14 +1,14 @@
 use crate::prelude::*;
 
 pub enum Instruction<'a> {
-  // BB entry
+  // block entry
 
   Function(u32, TypeList<'a>),
   Case(),
   Join(TypeList<'a>),
   Kont(TypeList<'a>),
 
-  // BB internal
+  // block middle
 
   ConstBool(bool),
   ConstI32(u32),
@@ -17,7 +17,13 @@ pub enum Instruction<'a> {
   Op2(Op2, Value, Value),
   Select(Value, Value, Value),
 
-  // BB terminator
+  /*
+  StackSlot(InMemoryType), /// TODO: aggregate types
+  Get(InMemoryType, Value, Value),
+  Set(InMemoryType, Value, Value, Value),
+  */
+
+  // block terminator
 
   If(Value, Label, Label),
   Return(u32, ValueList<'a>),
@@ -29,6 +35,9 @@ pub struct Tag(pub u8);
 
 #[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
 pub struct Type(pub u8);
+
+#[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
+pub struct InMemoryType(pub u8);
 
 #[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
 pub struct Op1(pub u8);
@@ -52,7 +61,7 @@ impl Tag {
   pub const JOIN: Self = Self(0x03);
   pub const KONT: Self = Self(0x04);
 
-  pub const CONST_BOOL: Self = Self(0x05);
+  pub const CONST_BOOL: Self = Self(0x0f);
   pub const CONST_I32: Self = Self(0x08);
   pub const CONST_I64: Self = Self(0x09);
   pub const OP1: Self = Self(0x05);
@@ -67,11 +76,12 @@ impl Tag {
 }
 
 impl Type {
-  pub const BOOL: Self = Self(0x00);
+  pub const BOOL: Self = Self(0x02);
   pub const I5: Self = Self(0x03);
   pub const I6: Self = Self(0x04);
   pub const I32: Self = Self(0x07);
   pub const I64: Self = Self(0x08);
+  pub const Ref: Self = Self(0x09);
 
   pub fn name(self) -> &'static str {
     self.info().0
@@ -90,12 +100,6 @@ impl Type {
         "unknown",
       )
     }
-  }
-}
-
-impl core::fmt::Display for Type {
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    write!(f, "{}", self.name())
   }
 }
 
@@ -126,12 +130,6 @@ impl Op1 {
         "unknown",
       )
     }
-  }
-}
-
-impl core::fmt::Display for Op1 {
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    write!(f, "{}", self.name())
   }
 }
 
@@ -166,9 +164,33 @@ impl Op2 {
   }
 }
 
+impl core::fmt::Display for Type {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    write!(f, "{}", self.name())
+  }
+}
+
+impl core::fmt::Display for Op1 {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    write!(f, "{}", self.name())
+  }
+}
+
 impl core::fmt::Display for Op2 {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    write!(f, "{}", self.info().0)
+    write!(f, "{}", self.name())
+  }
+}
+
+impl core::fmt::Display for Value {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    write!(f, "%{}", self.0)
+  }
+}
+
+impl core::fmt::Display for Label {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    write!(f, "=>{}", self.0)
   }
 }
 
@@ -220,24 +242,20 @@ impl SsaBuf {
     self.buf.view()
   }
 
-  pub fn patch_point(&self) -> PatchPoint {
-    PatchPoint(self.buf.len())
+  pub fn patch_label(&mut self, i: PatchPoint, a: Label) {
+    let mut w = self.buf.get_slice_mut(i.0, 4);
+    w.put_u32(a.0)
   }
 
-  pub fn patch_label(&mut self, PatchPoint(u): PatchPoint, Label(a): Label) {
-    let mut w = self.buf.get_slice_mut(u, 4);
-    w.put_u32(a)
-  }
-
-  pub fn emit_parameter(&mut self, Type(t): Type) -> Value {
+  pub fn emit_param(&mut self, t: Type) -> Value {
     let mut w = self.buf.append(1);
-    w.put_u8(t);
+    w.put_u8(t.0);
     self.next_value()
   }
 
-  pub fn emit_value(&mut self, Value(x): Value) {
+  pub fn emit_value(&mut self, x: Value) {
     let mut w = self.buf.append(4);
-    w.put_u32(x);
+    w.put_u32(x.0);
   }
 
   pub fn emit_function(&mut self, nkonts: u32, nargs: u32) {
@@ -276,49 +294,49 @@ impl SsaBuf {
     self.next_value()
   }
 
-  pub fn emit_op1(&mut self, Op1(t): Op1, Value(x): Value) -> Value {
+  pub fn emit_op1(&mut self, t: Op1, x: Value) -> Value {
     let mut w = self.buf.append(6);
     w.put_u8(Tag::OP1.0);
-    w.put_u8(t);
-    w.put_u32(x);
+    w.put_u8(t.0);
+    w.put_u32(x.0);
     self.next_value()
   }
 
-  pub fn emit_op2(&mut self, Op2(t): Op2, Value(x): Value, Value(y): Value) -> Value {
+  pub fn emit_op2(&mut self, t: Op2, x: Value, y: Value) -> Value {
     let mut w = self.buf.append(10);
     w.put_u8(Tag::OP2.0);
-    w.put_u8(t);
-    w.put_u32(x);
-    w.put_u32(y);
+    w.put_u8(t.0);
+    w.put_u32(x.0);
+    w.put_u32(y.0);
     self.next_value()
   }
 
-  pub fn emit_select(&mut self, Value(p): Value, Value(x): Value, Value(y): Value) -> Value {
+  pub fn emit_select(&mut self, p: Value, x: Value, y: Value) -> Value {
     let mut w = self.buf.append(13);
     w.put_u8(Tag::SELECT.0);
-    w.put_u32(p);
-    w.put_u32(x);
-    w.put_u32(y);
+    w.put_u32(p.0);
+    w.put_u32(x.0);
+    w.put_u32(y.0);
     self.next_value()
   }
 
-  pub fn emit_if(&mut self, Value(p): Value, Label(a): Label, Label(b): Label) -> (PatchPoint, PatchPoint) {
+  pub fn emit_if(&mut self, p: Value, a: Label, b: Label) -> (PatchPoint, PatchPoint) {
+    let n = self.buf.len();
     let mut w = self.buf.append(13);
     w.put_u8(Tag::IF.0);
-    w.put_u32(p);
-    w.put_u32(a);
-    w.put_u32(b);
-    let a = PatchPoint(self.buf.len() - 8);
-    let b = PatchPoint(self.buf.len() - 4);
-    (a, b)
+    w.put_u32(p.0);
+    w.put_u32(a.0);
+    w.put_u32(b.0);
+    (PatchPoint(n + 5), PatchPoint(n + 9))
   }
 
-  pub fn emit_goto(&mut self, Label(a): Label, nargs: u32) -> PatchPoint {
+  pub fn emit_goto(&mut self, a: Label, nargs: u32) -> PatchPoint {
+    let n = self.buf.len();
     let mut w = self.buf.append(9);
     w.put_u8(Tag::GOTO.0);
-    w.put_u32(a);
+    w.put_u32(a.0);
     w.put_u32(nargs);
-    PatchPoint(self.buf.len() - 8)
+    PatchPoint(n + 1)
   }
 
   pub fn emit_return(&mut self, index: u32, nargs: u32) {
@@ -424,6 +442,12 @@ pub fn display(buf: &[u8]) {
   let mut value_id = 0;
   let mut nkonts = 0;
 
+  fn next(x: &mut u32) -> u32 {
+    let y = *x;
+    *x = y + 1;
+    y
+  }
+
   loop {
     match read(&mut r) {
       None => { break; }
@@ -433,15 +457,12 @@ pub fn display(buf: &[u8]) {
             label_id = 0;
             value_id = 0;
             nkonts = n;
-            print!("{}: function ${} (", function_id, label_id);
-            function_id = function_id + 1;
-            label_id = label_id + 1;
+            print!("{}: function ${} (", next(&mut function_id), next(&mut label_id));
             for (i, ty) in args.iter().enumerate() {
               if i != 0 {
                 print!(", ");
               }
-              print!("%{} {}", value_id, ty);
-              value_id = value_id + 1;
+              print!("%{} {}", next(&mut value_id), ty);
             }
             print!(") -> ");
             if nkonts == 0 {
@@ -459,51 +480,43 @@ pub fn display(buf: &[u8]) {
             print!("\n");
           }
           Instruction::Case() => {
-            print!("{}: case\n", label_id);
-            label_id = label_id + 1;
+            print!("{}: case\n", next(&mut label_id));
           }
           Instruction::Join(args) => {
-            print!("{}: join (", label_id);
-            label_id = label_id + 1;
+            print!("{}: join (", next(&mut label_id));
             for (i, ty) in args.iter().enumerate() {
               if i != 0 {
                 print!(", ");
               }
-              print!("%{} {}", value_id, ty);
-              value_id = value_id + 1;
+              print!("%{} {}", next(&mut value_id), ty);
             }
             print!(")\n");
           }
           Instruction::ConstBool(p) => {
-            print!("\t%{} = const.bool #{}\n", value_id, p);
-            value_id = value_id + 1;
+            print!("\t%{} = const.bool #{}\n", next(&mut value_id), p);
           }
           Instruction::ConstI64(c) => {
-            print!("\t%{} = const.i64 #{}\n", value_id, c);
-            value_id = value_id + 1;
+            print!("\t%{} = const.i64 #{}\n", next(&mut value_id), c);
           }
-          Instruction::Op1(t, Value(x)) => {
-            print!("\t%{} = {} %{}\n", value_id, t, x);
-            value_id = value_id + 1;
+          Instruction::Op1(t, x) => {
+            print!("\t%{} = {} {}\n", next(&mut value_id), t, x);
           }
-          Instruction::Op2(t, Value(x), Value(y)) => {
-            print!("\t%{} = {} %{} %{}\n", value_id, t, x, y);
-            value_id = value_id + 1;
+          Instruction::Op2(t, x, y) => {
+            print!("\t%{} = {} {} {}\n", next(&mut value_id), t, x, y);
           }
-          Instruction::Select(Value(p), Value(x), Value(y)) => {
-            print!("\t%{} = select %{} %{} %{}\n", value_id, p, x, y);
-            value_id = value_id + 1;
+          Instruction::Select(p, x, y) => {
+            print!("\t%{} = select {} {} {}\n", next(&mut value_id), p, x, y);
           }
-          Instruction::If(Value(p), Label(a), Label(b)) => {
-            print!("\tif %{} =>{} =>{}\n", p, a, b);
+          Instruction::If(p, a, b) => {
+            print!("\tif {} then {} else {}\n", p, a, b);
           }
-          Instruction::Goto(Label(a), args) => {
-            print!("\tgoto =>{} (", a);
-            for (i, Value(x)) in args.iter().enumerate() {
+          Instruction::Goto(a, args) => {
+            print!("\tgoto {} (", a);
+            for (i, x) in args.iter().enumerate() {
               if i != 0 {
                 print!(", ");
               }
-              print!("%{}", x);
+              print!("{}", x);
             }
             print!(")\n");
           }
@@ -512,11 +525,11 @@ pub fn display(buf: &[u8]) {
             for _ in 0 .. index {
               print!("|")
             }
-            for (i, Value(x)) in args.iter().enumerate() {
+            for (i, x) in args.iter().enumerate() {
               if i != 0 {
                 print!(", ");
               }
-              print!("%{}", x);
+              print!("{}", x);
             }
             for _ in 0 .. nkonts.saturating_sub(index).saturating_sub(1) {
               print!("|")
