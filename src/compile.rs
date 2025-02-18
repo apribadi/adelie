@@ -3,18 +3,17 @@ use crate::ssa;
 use crate::mir;
 use crate::mir::Expression;
 use crate::mir::Symbol;
-use crate::ssa::SsaBuf;
 use crate::ssa::Label;
 use crate::ssa::Value;
 
 pub struct Env {
-  out: SsaBuf,
+  out: ssa::Builder,
 }
 
 impl Env {
   pub fn new() -> Self {
     Self {
-      out: SsaBuf::new(),
+      out: ssa::Builder::new(),
     }
   }
 }

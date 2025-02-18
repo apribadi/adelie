@@ -16,12 +16,9 @@ pub enum Instruction<'a> {
   Op1(Op1, Value),
   Op2(Op2, Value, Value),
   Select(Value, Value, Value),
-
-  /*
-  StackSlot(InMemoryType), /// TODO: aggregate types
-  Get(InMemoryType, Value, Value),
-  Set(InMemoryType, Value, Value, Value),
-  */
+  LetVariable(Value),
+  GetVariable(Variable),
+  SetVariable(Variable, Value),
 
   // block terminator
 
@@ -37,9 +34,6 @@ pub struct Tag(pub u8);
 pub struct Type(pub u8);
 
 #[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
-pub struct InMemoryType(pub u8);
-
-#[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
 pub struct Op1(pub u8);
 
 #[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
@@ -50,6 +44,9 @@ pub struct Value(pub u32);
 
 #[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
 pub struct Label(pub u32);
+
+#[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
+pub struct Variable(pub u32);
 
 pub struct TypeList<'a>(&'a [u8]);
 
@@ -67,6 +64,10 @@ impl Tag {
   pub const OP1: Self = Self(0x05);
   pub const OP2: Self = Self(0x06);
   pub const SELECT: Self = Self(0x07);
+
+  pub const LET_VARIABLE: Self = Self(0x10);
+  pub const GET_VARIABLE: Self = Self(0x11);
+  pub const SET_VARIABLE: Self = Self(0x12);
 
   pub const IF: Self = Self(0x0a);
   pub const GOTO: Self = Self(0x0b);
@@ -194,6 +195,12 @@ impl core::fmt::Display for Label {
   }
 }
 
+impl core::fmt::Display for Variable {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    write!(f, "@{}", self.0)
+  }
+}
+
 impl<'a> TypeList<'a> {
   #[inline(always)]
   pub fn iter(&self) -> impl Iterator<Item = Type> + use<'_> {
@@ -208,34 +215,42 @@ impl<'a> ValueList<'a> {
   }
 }
 
-pub struct SsaBuf {
+pub struct Builder {
   buf: Buf,
   value_id: u32,
   label_id: u32,
+  variable_id: u32,
 }
 
 #[derive(Clone, Copy)]
 pub struct PatchPoint(pub usize);
 
-impl SsaBuf {
+fn incr(x: &mut u32) -> u32 {
+  let n = *x;
+  *x = n + 1;
+  n
+}
+
+impl Builder {
   pub fn new() -> Self {
     Self {
       buf: Buf::new(),
       value_id: 0,
       label_id: 0,
+      variable_id: 0,
     }
   }
 
   pub fn next_value(&mut self) -> Value {
-    let n = self.value_id;
-    self.value_id = n + 1;
-    Value(n)
+    Value(incr(&mut self.value_id))
   }
 
   pub fn next_label(&mut self) -> Label {
-    let n = self.label_id;
-    self.label_id = n + 1;
-    Label(n)
+    Label(incr(&mut self.label_id))
+  }
+
+  pub fn next_variable(&mut self) -> Variable {
+    Variable(incr(&mut self.variable_id))
   }
 
   pub fn view(&self) -> &[u8] {
@@ -318,6 +333,27 @@ impl SsaBuf {
     w.put_u32(x.0);
     w.put_u32(y.0);
     self.next_value()
+  }
+
+  pub fn emit_let_variable(&mut self, x: Value) -> Variable {
+    let mut w = self.buf.append(5);
+    w.put_u8(Tag::LET_VARIABLE.0);
+    w.put_u32(x.0);
+    self.next_variable()
+  }
+
+  pub fn emit_get_variable(&mut self, x: Variable) -> Value {
+    let mut w = self.buf.append(5);
+    w.put_u8(Tag::GET_VARIABLE.0);
+    w.put_u32(x.0);
+    self.next_value()
+  }
+
+  pub fn emit_set_variable(&mut self, x: Variable, y: Value) {
+    let mut w = self.buf.append(9);
+    w.put_u8(Tag::SET_VARIABLE.0);
+    w.put_u32(x.0);
+    w.put_u32(y.0);
   }
 
   pub fn emit_if(&mut self, p: Value, a: Label, b: Label) -> (PatchPoint, PatchPoint) {
@@ -403,6 +439,22 @@ pub fn read<'a, 'b>(buf: &'a mut &'b [u8]) -> Option<Instruction<'b>> {
         let x = Value(r.pop_u32());
         let y = Value(r.pop_u32());
         Instruction::Select(p, x, y)
+      }
+      Tag::LET_VARIABLE => {
+        let mut r = chomp(&mut cursor, 4)?;
+        let x = Value(r.pop_u32());
+        Instruction::LetVariable(x)
+      }
+      Tag::GET_VARIABLE => {
+        let mut r = chomp(&mut cursor, 4)?;
+        let x = Variable(r.pop_u32());
+        Instruction::GetVariable(x)
+      }
+      Tag::SET_VARIABLE => {
+        let mut r = chomp(&mut cursor, 8)?;
+        let x = Variable(r.pop_u32());
+        let y = Value(r.pop_u32());
+        Instruction::SetVariable(x, y)
       }
       Tag::IF => {
         let mut r = chomp(&mut cursor, 12)?;

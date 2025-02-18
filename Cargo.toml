@@ -1,7 +1,7 @@
 [package]
 authors = ["Aaron Pribadi <aaron.pribadi@gmail.com>"]
 edition = "2021"
-name = "adelie"
+name = "lilac"
 
 [dependencies]
 oxcart = { git = "https://github.com/apribadi/oxcart.git" }

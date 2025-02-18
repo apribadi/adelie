@@ -2,13 +2,13 @@
 //!
 //!
 
-use adelie::ssa::Op2;
-use adelie::ssa::Value;
-use adelie::ssa::Label;
-use adelie::ssa::Type;
+use lilac::ssa::Op2;
+use lilac::ssa::Value;
+use lilac::ssa::Label;
+use lilac::ssa::Type;
 
 fn main() {
-  let mut buf = adelie::ssa::SsaBuf::new();
+  let mut buf = lilac::ssa::Builder::new();
 
   buf.emit_function(1, 1);
   let _ = buf.emit_param(Type::I64);
@@ -35,9 +35,9 @@ fn main() {
   buf.emit_return(0, 1);
   buf.emit_value(Value(5));
 
-  adelie::ssa::display(buf.view());
+  lilac::ssa::display(buf.view());
 
   print!("\n\n");
 
-  adelie::compile::compile(&adelie::mir::FIB);
+  lilac::compile::compile(&lilac::mir::FIB);
 }

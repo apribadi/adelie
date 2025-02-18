@@ -54,8 +54,8 @@ pub struct Function<'a> {
 #[derive(Clone, Copy)]
 pub enum Statement<'a> {
   Let(Symbol<'a>, Expression<'a>),
-  Set(Symbol<'a>, Expression<'a>),
-  Var(Symbol<'a>, Expression<'a>),
+  LetVariable(Symbol<'a>, Expression<'a>),
+  SetVariable(Symbol<'a>, Expression<'a>),
   Goto(Symbol<'a>, &'a [Expression<'a>]),
   Return(),
 }
